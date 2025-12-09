@@ -13,10 +13,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
 
-/**
- * Single entry point for all test interactions.
- * No inheritance, no complexity - just a session you can use.
- */
 public class Session {
     private static Session instance;
     private AndroidDriver driver;
@@ -37,20 +33,25 @@ public class Session {
         return instance;
     }
 
-    // === Lifecycle ===
-
     public void open() {
         if (driver != null) return;
         try {
             var opts = new UiAutomator2Options()
                 .setDeviceName(props.getProperty("device"))
                 .setPlatformVersion(props.getProperty("version"))
-                .setAutoGrantPermissions(true);
+                .setAutoGrantPermissions(true)
+                .setNewCommandTimeout(Duration.ofSeconds(300))
+                .setAppWaitDuration(Duration.ofSeconds(90))
+                .setUiautomator2ServerLaunchTimeout(Duration.ofSeconds(90))
+                .setUiautomator2ServerInstallTimeout(Duration.ofSeconds(90))
+                .setAdbExecTimeout(Duration.ofSeconds(60));
 
             // Use APK path if provided, otherwise use package/activity
             String appPath = props.getProperty("app");
             if (appPath != null && !appPath.isEmpty()) {
                 opts.setApp(System.getProperty("user.dir") + "/" + appPath);
+                // Set app wait activity to handle splash screen
+                opts.setAppWaitActivity("*");
             } else {
                 opts.setAppPackage(props.getProperty("package"));
                 opts.setAppActivity(props.getProperty("activity"));
@@ -72,8 +73,6 @@ public class Session {
         }
     }
 
-    // === Finding ===
-
     public WebElement find(String locator) {
         return waiter.until(ExpectedConditions.presenceOfElementLocated(parse(locator)));
     }
@@ -85,8 +84,6 @@ public class Session {
     public boolean exists(String locator) {
         return !findAll(locator).isEmpty();
     }
-
-    // === Actions ===
 
     public void tap(String locator) {
         waiter.until(ExpectedConditions.elementToBeClickable(parse(locator))).click();
@@ -106,9 +103,6 @@ public class Session {
         try { Thread.sleep(seconds * 1000L); } catch (InterruptedException ignored) {}
     }
 
-    // === Locator Parser ===
-    // Supports: "id:something", "xpath://div", "text:Hello", "class:android.widget.Button"
-
     private By parse(String locator) {
         if (!locator.contains(":")) {
             return By.id(locator); // default to ID
@@ -126,8 +120,6 @@ public class Session {
             default -> By.id(locator);
         };
     }
-
-    // === Raw Access (escape hatch) ===
 
     public AndroidDriver driver() {
         return driver;
