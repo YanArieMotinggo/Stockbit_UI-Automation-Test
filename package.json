@@ -1,14 +1,11 @@
 {
-  "name": "stockbit_ui-automation-test",
+  "name": "android-ui-automation-test",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Android UI automation framework using Appium and Cucumber",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "appium": "appium --relaxed-security",
+    "appium:install": "appium driver install uiautomator2"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "appium": "^2.5.0"
   },

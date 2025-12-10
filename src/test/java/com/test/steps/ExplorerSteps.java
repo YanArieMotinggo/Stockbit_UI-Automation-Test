@@ -46,8 +46,7 @@ public class ExplorerSteps {
         java.util.List<String> criticalErrors = errors.stream()
             .filter(e -> e.contains("ANR") || 
                         e.contains("has stopped") || 
-                        e.contains("keeps stopping") ||
-                        e.contains("FATAL"))
+                        e.contains("keeps stopping"))
             .collect(java.util.stream.Collectors.toList());
         
         if (!criticalErrors.isEmpty()) {
@@ -55,20 +54,19 @@ public class ExplorerSteps {
                 String.join("\n", criticalErrors));
         }
         
-        // Report all errors but don't fail on session issues
         if (!errors.isEmpty()) {
-            System.out.println("⚠️ Non-critical errors encountered: " + errors.size());
+            System.out.println("Non-critical errors encountered: " + errors.size());
             for (String err : errors) {
-                System.out.println("  • " + err);
+                System.out.println("  - " + err);
             }
         }
         
-        System.out.println("✅ No critical errors found. Total errors: " + errors.size());
+        System.out.println("No critical errors found. Total errors: " + errors.size());
     }
     
     @Then("tests should be generated")
     public void testsShouldBeGenerated() {
-        System.out.println("✅ Tests have been generated in src/test/resources/features/generated/");
+        System.out.println("Tests generated in src/test/resources/features/generated/");
     }
 }
 

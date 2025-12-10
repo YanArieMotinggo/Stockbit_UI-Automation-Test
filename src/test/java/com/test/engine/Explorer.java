@@ -23,6 +23,12 @@ public class Explorer {
     private String appPackage = "com.saucelabs.mydemoapp.android";
     private int crashCount = 0;
     private static final int MAX_CRASH_RECOVERY = 3;
+    
+    private long startTime;
+    private static final long MAX_EXPLORATION_TIME = 5 * 60 * 1000;
+    private int stuckCounter = 0;
+    private static final int MAX_STUCK_COUNT = 3;
+    private String lastScreenSignature = "";
 
     public Explorer() {
         this.app = Session.current();
@@ -44,54 +50,68 @@ public class Explorer {
     }
 
     public void explore() {
-        log("╔══════════════════════════════════════════════════════════════╗");
-        log("║         DEPTH-FIRST SEARCH APP EXPLORATION                   ║");
-        log("╠══════════════════════════════════════════════════════════════╣");
-        log("║  Max depth: " + maxDepth + "                                              ║");
-        log("║  Strategy: Explore deep, then backtrack                      ║");
-        log("╚══════════════════════════════════════════════════════════════╝");
+        startTime = System.currentTimeMillis();
+        log("Starting exploration, max depth: " + maxDepth + ", timeout: " + (MAX_EXPLORATION_TIME/1000) + "s");
         
-        pause(3000); // Wait for app to load
+        pause(1500);
         waitForAppToLoad();
-        
-        // Record root screen
         rootScreen = getScreenSignature();
-        
-        // Start DFS exploration
+        lastScreenSignature = rootScreen;
         dfsExplore(new ArrayList<>());
-        
         printNavigationReport();
+    }
+    
+    private boolean isTimedOut() {
+        return System.currentTimeMillis() - startTime > MAX_EXPLORATION_TIME;
+    }
+    
+    private boolean isStuck(String currentScreen) {
+        if (currentScreen.equals(lastScreenSignature)) {
+            stuckCounter++;
+            if (stuckCounter >= MAX_STUCK_COUNT) {
+                log("Stuck on same screen " + stuckCounter + " times, breaking out");
+                return true;
+            }
+        } else {
+            stuckCounter = 0;
+            lastScreenSignature = currentScreen;
+        }
+        return false;
     }
 
     private void dfsExplore(List<NavigationStep> pathToHere) {
-        if (currentDepth >= maxDepth) {
-            log("⚠ Max depth " + maxDepth + " reached, backtracking...");
+        if (isTimedOut()) {
+            log("Exploration timeout reached, stopping");
             return;
         }
         
+        if (currentDepth >= maxDepth) {
+            log("Max depth " + maxDepth + " reached, backtracking");
+            return;
+        }
+
         if (!verifyAndRecoverAppState()) {
-            log("❌ Cannot continue - app in bad state");
+            log("Cannot continue - app in bad state");
             return;
         }
 
         String currentScreen = getScreenSignature();
         
-        // Check if we've already fully explored this screen from this path
+        if (isStuck(currentScreen)) {
+            goBack();
+            return;
+        }
+        
         String screenStateKey = currentScreen + "|depth" + currentDepth;
         if (visitedScreens.contains(screenStateKey)) {
-            log("↩ Screen already explored at this depth: " + truncate(currentScreen, 40));
+            log("Screen already explored: " + truncate(currentScreen, 40));
             return;
         }
 
         currentDepth++;
         visitedScreens.add(screenStateKey);
         
-        log("\n" + "═".repeat(70));
-        log("📱 EXPLORING SCREEN [Depth " + currentDepth + "]");
-        log("   Screen: " + truncate(currentScreen, 50));
-        log("   Path: " + formatPath(pathToHere));
-        log("   App Status: ✓ In App");
-        log("═".repeat(70));
+        log("\n[Depth " + currentDepth + "] " + truncate(currentScreen, 50));
 
         // Create or update screen node
         ScreenNode node = screenGraph.computeIfAbsent(currentScreen, k -> new ScreenNode(currentScreen));
@@ -101,7 +121,7 @@ public class Explorer {
 
         // Check for crash dialogs
         if (checkForCrash()) {
-            log("❌ APP CRASH DETECTED!");
+            log("APP CRASH DETECTED!");
             errors.add("CRASH on screen: " + currentScreen + " via path: " + formatPath(pathToHere));
             dismissCrashDialog();
             if (!verifyAndRecoverAppState()) {
@@ -110,13 +130,11 @@ public class Explorer {
             }
         }
 
-        log("\n--- Discovering Elements ---");
         List<ElementInfo> elements = discoverAllElements();
         node.elements.addAll(elements);
         log("  Found " + elements.size() + " elements");
 
         if (tryScrolling) {
-            log("\n--- Scroll Discovery ---");
             List<ElementInfo> moreElements = scrollAndDiscover();
             for (ElementInfo el : moreElements) {
                 if (!containsElement(node.elements, el)) {
@@ -127,11 +145,9 @@ public class Explorer {
         }
 
         if (fillForms) {
-            log("\n--- Filling Forms ---");
             fillAllTextFields(elements);
         }
 
-        log("\n--- Tap & Explore ---");
         List<ElementInfo> clickables = new ArrayList<>();
         for (ElementInfo el : node.elements) {
             if (el.isClickable && !shouldSkipElement(el)) {
@@ -139,20 +155,17 @@ public class Explorer {
             }
         }
         
-        log("  Found " + clickables.size() + " clickable elements to explore");
+        log("  " + clickables.size() + " clickables");
         
         for (ElementInfo element : clickables) {
+            if (isTimedOut()) {
+                log("Timeout, stopping");
+                break;
+            }
+            
             if (!isStillInApp()) {
-                log("  ⚠ NOT IN APP at start of iteration!");
                 if (!verifyAndRecoverAppState()) {
-                    log("  ❌ Cannot recover, stopping exploration");
-                    break;
-                }
-                // After recovery, re-check current screen
-                String recoveredScreen = getScreenSignature();
-                if (!recoveredScreen.equals(currentScreen)) {
-                    log("  ⚠ After recovery, on different screen. Stopping this branch.");
-                    break;
+                    continue;
                 }
             }
             
@@ -164,11 +177,11 @@ public class Explorer {
             visitedElements.add(elementKey);
             
             // Try to tap this element
-            log("\n  👆 Tapping: " + element.id);
+            log("  Tapping: " + element.id);
             
             // Verify app state before tapping
             if (!verifyAndRecoverAppState()) {
-                log("    ✗ App crashed, stopping exploration of this branch");
+                log("    App crashed, stopping exploration of this branch");
                 break;
             }
             
@@ -176,15 +189,15 @@ public class Explorer {
             boolean tapped = tapElement(element);
             
             if (!tapped) {
-                log("    ✗ Could not tap element");
+                log("    Could not tap element");
                 continue;
             }
             
-            pause(1000);
+            pause(100);
             
             // Check if app crashed after tap
             if (!verifyAndRecoverAppState()) {
-                log("    ✗ App crashed after tapping " + element.id);
+                log("    App crashed after tapping " + element.id);
                 errors.add("Crash after tapping: " + element.id + " on " + truncate(currentScreen, 30));
                 continue;
             }
@@ -213,12 +226,12 @@ public class Explorer {
                 // Backtrack: Return to current screen
                 log("    ← Backtracking to: " + truncate(currentScreen, 40));
                 goBack();
-                pause(800);
+                pause(200);
                 
                 // Verify we're back
                 String backScreen = getScreenSignature();
                 if (!backScreen.equals(currentScreen)) {
-                    log("    ⚠ Could not return! Trying navigation path...");
+                    log("    Could not return, trying navigation path...");
                     navigateToScreen(pathToHere);
                 }
                 
@@ -243,10 +256,10 @@ public class Explorer {
                 
                 // Close the menu first
                 goBack();
-                pause(500);
+                pause(150);
                 
                 // Now explore EACH menu item deeply (DFS)
-                log("    📂 Exploring " + newClickables.size() + " menu items...");
+                log("    Exploring " + newClickables.size() + " menu items");
                 
                 for (ElementInfo menuItem : newClickables) {
                     String menuItemKey = currentScreen + "|menu|" + menuItem.id;
@@ -255,27 +268,23 @@ public class Explorer {
                     }
                     visitedElements.add(menuItemKey);
                     
-                    // Verify app state before exploring menu item
                     if (!verifyAndRecoverAppState()) {
-                        log("    ✗ App crashed, stopping menu exploration");
-                        break;
+                        continue;
                     }
                     
-                    log("\n    🔸 Exploring menu item: " + menuItem.id);
+                    log("    Menu item: " + menuItem.id);
                     
                     // Re-open the menu
                     log("      Opening menu via: " + element.id);
                     boolean menuOpened = tapElement(element);
                     if (!menuOpened) {
-                        log("      ✗ Could not re-open menu");
+                        log("      Could not re-open menu");
                         continue;
                     }
-                    pause(800);
+                    pause(200);
                     
-                    // Verify still in app after opening menu
                     if (!isStillInApp()) {
-                        log("      ✗ App crashed while opening menu");
-                        if (!verifyAndRecoverAppState()) break;
+                        verifyAndRecoverAppState();
                         continue;
                     }
                     
@@ -283,16 +292,16 @@ public class Explorer {
                     log("      Tapping: " + menuItem.id);
                     boolean menuItemTapped = tapElement(menuItem);
                     if (!menuItemTapped) {
-                        log("      ✗ Could not tap menu item");
+                        log("      Could not tap menu item");
                         goBack();
-                        pause(500);
+                        pause(150);
                         continue;
                     }
-                    pause(1000);
+                    pause(100);
                     
                     // Check if app crashed after tapping menu item
                     if (!verifyAndRecoverAppState()) {
-                        log("      ✗ App crashed after tapping menu item: " + menuItem.id);
+                        log("      App crashed after tapping menu item: " + menuItem.id);
                         errors.add("Crash after menu item: " + menuItem.id);
                         continue;
                     }
@@ -322,21 +331,19 @@ public class Explorer {
                         // Backtrack to original screen
                         log("      ← Backtracking from menu item screen");
                         goBack();
-                        pause(800);
+                        pause(200);
                         
-                        // Verify we're back and app is ok
                         if (!verifyAndRecoverAppState()) {
-                            log("      ✗ App crashed during backtrack");
-                            break;
+                            continue;
                         }
                         
                         String backCheck = getScreenSignature();
                         if (!backCheck.equals(currentScreen)) {
-                            log("      ⚠ Not back to original, navigating...");
+                            log("      Not back to original, navigating...");
                             // Try multiple backs
                             for (int i = 0; i < 5; i++) {
                                 goBack();
-                                pause(500);
+                                pause(150);
                                 if (!isStillInApp()) {
                                     verifyAndRecoverAppState();
                                     break;
@@ -347,7 +354,7 @@ public class Explorer {
                     } else {
                         // Menu item didn't navigate, just close
                         goBack();
-                        pause(500);
+                        pause(150);
                     }
                 }
             }
@@ -362,9 +369,9 @@ public class Explorer {
         // First, go back to root
         for (int i = 0; i < currentDepth + 2; i++) {
             goBack();
-            pause(300);
+            pause(100);
         }
-        pause(1000);
+        pause(100);
         
         // Then follow the path
         for (NavigationStep step : path) {
@@ -373,7 +380,7 @@ public class Explorer {
             el.resourceId = step.elementTapped;
             
             tapElement(el);
-            pause(800);
+            pause(200);
         }
     }
 
@@ -382,7 +389,7 @@ public class Explorer {
         
         // Quick app check before discovery
         if (!quickAppCheck()) {
-            log("    ⚠ Not in app during element discovery!");
+            log("    Not in app during element discovery");
             return elements;
         }
         
@@ -401,7 +408,7 @@ public class Explorer {
             log("    Error finding clickables: " + e.getMessage());
             // Check if error is because we left the app
             if (!quickAppCheck()) {
-                log("    ⚠ Left app during element discovery");
+                log("    Left app during element discovery");
                 return elements;
             }
         }
@@ -472,16 +479,16 @@ public class Explorer {
         for (int i = 0; i < 5; i++) {
             // Check app state before scrolling
             if (!quickAppCheck()) {
-                log("    ⚠ Left app during scroll discovery");
+                log("    Left app during scroll discovery");
                 break;
             }
             
             scrollDown();
-            pause(500);
+            pause(150);
             
             // Check app state after scrolling
             if (!quickAppCheck()) {
-                log("    ⚠ Left app after scroll");
+                log("    Left app after scroll");
                 break;
             }
             
@@ -510,14 +517,14 @@ public class Explorer {
     private void scrollToTop() {
         for (int i = 0; i < 5; i++) {
             scrollUp();
-            pause(300);
+                    pause(100);
         }
     }
 
     private boolean tapElement(ElementInfo el) {
         // Quick check before attempting tap
         if (!quickAppCheck()) {
-            log("      ⚠ Not in app before tap attempt");
+            log("      Not in app before tap attempt");
             return false;
         }
         
@@ -549,9 +556,9 @@ public class Explorer {
                 element.click();
                 
                 // Quick check after tap
-                pause(500);
+                pause(150);
                 if (!quickAppCheck()) {
-                    log("      ⚠ Left app after tapping " + el.id);
+                    log("      Left app after tapping " + el.id);
                     return false;
                 }
                 return true;
@@ -560,7 +567,7 @@ public class Explorer {
             errors.add("Tap failed: " + el.id + " - " + e.getMessage());
             // Check if we're still in app after error
             if (!quickAppCheck()) {
-                log("      ⚠ Left app after tap error");
+                log("      Left app after tap error");
             }
         }
         return false;
@@ -576,10 +583,10 @@ public class Explorer {
                     }
                     if (field != null && field.isDisplayed()) {
                         String value = generateTestValue(el.id);
-                        log("    ✏ Filling " + el.id + " with: " + value);
+                        log("    Filling " + el.id + " with: " + value);
                         field.clear();
                         field.sendKeys(value);
-                        pause(300);
+                        pause(100);
                     }
                 } catch (Exception e) {
                     errors.add("Fill failed: " + el.id);
@@ -594,11 +601,11 @@ public class Explorer {
             try {
                 List<WebElement> elements = app.driver().findElements(By.xpath("//*[@clickable='true']"));
                 if (!elements.isEmpty()) {
-                    log("✓ App loaded - found " + elements.size() + " clickable elements");
+                    log("App loaded - found " + elements.size() + " clickable elements");
                     return;
                 }
             } catch (Exception ignored) {}
-            pause(1000);
+            pause(100);
             log("  Waiting for app... (" + (i+1) + "/10)");
         }
     }
@@ -654,8 +661,18 @@ public class Explorer {
     private boolean shouldSkipElement(ElementInfo el) {
         if (el.id == null) return true;
         String id = el.id.toLowerCase();
-        return id.contains("back") || id.contains("navigate_up") || 
-               id.contains("home") || id.equals("unknown");
+        
+        if (id.contains("back") || id.contains("navigate_up") || 
+            id.contains("home") || id.equals("unknown")) {
+            return true;
+        }
+        
+        if (id.contains("aerr_") || id.contains("alert") || 
+            id.contains("error:") || id.contains("crash")) {
+            return true;
+        }
+        
+        return false;
     }
 
     private String generateTestValue(String fieldId) {
@@ -722,15 +739,15 @@ public class Explorer {
     }
 
     private void goBack() {
-        try { 
-            app.driver().navigate().back(); 
-            pause(300);
+        try {
+            app.driver().navigate().back();
+            pause(100);
             // Check if back caused us to leave the app
             if (!quickAppCheck()) {
-                log("    ⚠ Back button caused app exit!");
+                log("    Back button caused app exit");
             }
         } catch (Exception e) {
-            log("    ⚠ Error going back: " + e.getMessage());
+            log("    Error going back: " + e.getMessage());
         }
     }
 
@@ -741,7 +758,7 @@ public class Explorer {
                 By.xpath("//*[contains(@text, 'has stopped') or contains(@text, 'keeps stopping') or " +
                          "contains(@text, 'isn\\'t responding') or contains(@text, 'Unfortunately')]"));
             if (!crashDialogs.isEmpty()) {
-                log("❌ CRASH DIALOG DETECTED!");
+                log("CRASH DIALOG DETECTED");
                 return true;
             }
             return false;
@@ -757,25 +774,25 @@ public class Explorer {
             String currentPackage = app.driver().getCurrentPackage();
             
             if (currentPackage == null) {
-                log("⚠ Cannot get current package - session may be dead");
+                log("Cannot get current package - session may be dead");
                 return false;
             }
             
             if (!currentPackage.contains("saucelabs") && !currentPackage.contains("mydemoapp")) {
-                log("⚠ LEFT THE APP! Current package: " + currentPackage);
+                log("LEFT THE APP! Current package: " + currentPackage);
                 return false;
             }
             
             // Check if we're on launcher
             if (currentPackage.contains("launcher") || currentPackage.contains("home") || 
                 currentPackage.contains("nexuslauncher") || currentPackage.contains("settings")) {
-                log("⚠ ON LAUNCHER/SETTINGS - App may have crashed");
+                log("ON LAUNCHER/SETTINGS - App may have crashed");
                 return false;
             }
             
             return true;
         } catch (Exception e) {
-            log("⚠ Cannot determine app state: " + e.getMessage());
+            log("Cannot determine app state: " + e.getMessage());
             return false;
         }
     }
@@ -785,7 +802,7 @@ public class Explorer {
             String pkg = app.driver().getCurrentPackage();
             if (pkg == null) {
                 // Null package could be timing issue, try again
-                pause(500);
+                pause(150);
                 pkg = app.driver().getCurrentPackage();
             }
             return pkg != null && (pkg.contains("saucelabs") || pkg.contains("mydemoapp"));
@@ -808,12 +825,12 @@ public class Explorer {
             // Check for crash dialog only if we're in app
             if (checkForCrash()) {
                 dismissCrashDialog();
-                pause(1000);
+                pause(100);
                 crashCount++;
                 errors.add("APP CRASH #" + crashCount + " detected and dismissed");
                 
                 if (crashCount >= MAX_CRASH_RECOVERY) {
-                    log("❌ Too many crashes (" + crashCount + "), stopping exploration");
+                    log("Too many crashes (" + crashCount + "), stopping exploration");
                     return false;
                 }
             }
@@ -821,46 +838,46 @@ public class Explorer {
         }
         
         // Not in app - try to recover
-        log("🔄 Not in app, attempting recovery...");
+        log("Not in app, attempting recovery...");
         return restartApp();
     }
     
     private boolean restartApp() {
         try {
-            log("🔄 Restarting app...");
+            log("Restarting app...");
             
             // Try to launch the app
             app.driver().activateApp(appPackage);
-            pause(3000);
+            pause(150);
             
             // Verify we're back in app
             if (isStillInApp()) {
-                log("✓ App restarted successfully");
+                log("App restarted successfully");
                 crashCount = 0;
                 return true;
             }
             
             // Try harder - terminate and relaunch
-            log("🔄 Force restarting app...");
+            log("Force restarting app...");
             try {
                 app.driver().terminateApp(appPackage);
             } catch (Exception ignored) {}
-            pause(1000);
+            pause(100);
             
             app.driver().activateApp(appPackage);
-            pause(5000);
+            pause(100);
             
             if (isStillInApp()) {
-                log("✓ App force-restarted successfully");
+                log("App force-restarted successfully");
                 return true;
             }
             
-            log("❌ Could not restart app");
+            log("Could not restart app");
             errors.add("FATAL: Could not restart app after crash");
             return false;
             
         } catch (Exception e) {
-            log("❌ Error restarting app: " + e.getMessage());
+            log("Error restarting app: " + e.getMessage());
             errors.add("FATAL: Exception while restarting app: " + e.getMessage());
             return false;
         }
@@ -873,13 +890,13 @@ public class Explorer {
             for (String text : dismissTexts) {
                 try {
                     List<WebElement> buttons = app.driver().findElements(By.xpath("//*[@text='" + text + "']"));
-                    if (!buttons.isEmpty()) {
-                        buttons.get(0).click();
+            if (!buttons.isEmpty()) {
+                buttons.get(0).click();
                         log("  Dismissed crash dialog via: " + text);
-                        pause(1000);
+                pause(100);
                         return;
-                    }
-                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
             }
             
             // Try clicking any button
@@ -918,28 +935,20 @@ public class Explorer {
     }
 
     private void printNavigationReport() {
-        System.out.println("\n");
-        System.out.println("╔══════════════════════════════════════════════════════════════════════╗");
-        System.out.println("║                    EXPLORATION COMPLETE                              ║");
-        System.out.println("╠══════════════════════════════════════════════════════════════════════╣");
-        System.out.println("║  Screens Discovered: " + pad(String.valueOf(screenGraph.size()), 47) + "║");
-        System.out.println("║  Total Elements: " + pad(String.valueOf(getTotalElements()), 51) + "║");
-        System.out.println("║  Elements Interacted: " + pad(String.valueOf(visitedElements.size()), 46) + "║");
-        System.out.println("║  Errors: " + pad(String.valueOf(errors.size()), 59) + "║");
-        System.out.println("╚══════════════════════════════════════════════════════════════════════╝");
+        System.out.println("\n=== EXPLORATION COMPLETE ===");
+        System.out.println("Screens Discovered: " + screenGraph.size());
+        System.out.println("Total Elements: " + getTotalElements());
+        System.out.println("Elements Interacted: " + visitedElements.size());
+        System.out.println("Errors: " + errors.size());
 
-        System.out.println("\n🗺️  NAVIGATION MAP (How to reach each screen):\n");
+        System.out.println("\nNAVIGATION MAP:\n");
         
         for (Map.Entry<String, ScreenNode> entry : screenGraph.entrySet()) {
             ScreenNode node = entry.getValue();
-            System.out.println("┌" + "─".repeat(70));
-            System.out.println("│ 📱 " + truncate(entry.getKey(), 64));
-            System.out.println("├" + "─".repeat(70));
-            System.out.println("│ 🛤️  PATH FROM ROOT: " + formatPath(node.pathFromRoot));
-            System.out.println("│ ");
-            System.out.println("│ 📦 Elements (" + node.elements.size() + "):");
+            System.out.println("Screen: " + truncate(entry.getKey(), 64));
+            System.out.println("  Path: " + formatPath(node.pathFromRoot));
+            System.out.println("  Elements (" + node.elements.size() + "):");
             
-            // Group elements by trigger
             Map<String, List<ElementInfo>> byTrigger = new LinkedHashMap<>();
             byTrigger.put("Direct", new ArrayList<>());
             
@@ -950,38 +959,33 @@ public class Explorer {
             
             for (Map.Entry<String, List<ElementInfo>> group : byTrigger.entrySet()) {
                 if (!group.getValue().isEmpty()) {
-                    System.out.println("│   [" + group.getKey() + "]");
+                    System.out.println("    [" + group.getKey() + "]");
                     for (ElementInfo el : group.getValue()) {
-                        String type = el.isClickable ? "🔘" : (el.isTextField ? "✏️" : "📝");
-                        System.out.println("│     " + type + " " + el.id);
+                        String type = el.isClickable ? "(btn)" : (el.isTextField ? "(input)" : "(text)");
+                        System.out.println("      " + type + " " + el.id);
                     }
                 }
             }
             
             if (!node.outgoingEdges.isEmpty()) {
-                System.out.println("│ ");
-                System.out.println("│ 🔗 Leads to:");
+                System.out.println("  Leads to:");
                 for (NavigationStep edge : node.outgoingEdges) {
-                    System.out.println("│     → Tap [" + edge.elementTapped + "] → " + truncate(edge.toScreen, 40));
+                    System.out.println("    Tap [" + edge.elementTapped + "] -> " + truncate(edge.toScreen, 40));
                 }
             }
-            System.out.println("└" + "─".repeat(70) + "\n");
+            System.out.println();
         }
         
         if (!errors.isEmpty()) {
-            System.out.println("\n⚠️ ERRORS:");
+            System.out.println("\nERRORS:");
             for (String err : errors) {
-                System.out.println("  • " + err);
+                System.out.println("  - " + err);
             }
         }
     }
 
     private int getTotalElements() {
         return screenGraph.values().stream().mapToInt(n -> n.elements.size()).sum();
-    }
-
-    private String pad(String s, int len) {
-        return s + " ".repeat(Math.max(0, len - s.length()));
     }
 
     public Set<String> getVisitedScreens() { return visitedScreens; }

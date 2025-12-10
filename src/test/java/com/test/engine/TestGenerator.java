@@ -18,28 +18,134 @@ public class TestGenerator {
     public void generateAll() {
         createOutputDirectory();
         
-        // Generate navigation tests
         generateNavigationTests();
-        
-        // Generate element interaction tests
         generateElementTests();
-        
-        // Generate form tests
         generateFormTests();
-        
-        // Generate smoke test suite
         generateSmokeTestSuite();
+        generateScreenClasses();
         
-        System.out.println("\n✅ TEST GENERATION COMPLETE");
+        System.out.println("\nTest generation complete");
         System.out.println("Generated " + generatedScenarios.size() + " test scenarios");
-        System.out.println("Output directory: " + outputDir);
+        System.out.println("Generated " + screenMap.size() + " screen classes");
+        System.out.println("Output: " + outputDir);
     }
 
     private void createOutputDirectory() {
         try {
             Files.createDirectories(Paths.get(outputDir));
+            Files.createDirectories(Paths.get("src/test/java/com/test/screens/generated/"));
         } catch (IOException e) {
             throw new RuntimeException("Cannot create output directory", e);
+        }
+    }
+
+    private void generateScreenClasses() {
+        int screenCount = 0;
+        
+        for (Map.Entry<String, Explorer.ScreenNode> entry : screenMap.entrySet()) {
+            Explorer.ScreenNode screen = entry.getValue();
+            String screenName = deriveScreenName(entry.getKey(), screenCount);
+            
+            if (screen.elements.isEmpty()) continue;
+            
+            StringBuilder java = new StringBuilder();
+            java.append("package com.test.screens.generated;\n\n");
+            java.append("import com.test.engine.Session;\n\n");
+            java.append("public class ").append(screenName).append(" {\n\n");
+            java.append("    private final Session app = Session.current();\n\n");
+            
+            Set<String> addedIds = new HashSet<>();
+            Set<String> clickables = new LinkedHashSet<>();
+            Set<String> textFields = new LinkedHashSet<>();
+            
+            for (Explorer.ElementInfo el : screen.elements) {
+                if (el.id == null || el.id.equals("unknown") || el.id.equals("null")) continue;
+                if (addedIds.contains(el.id)) continue;
+                addedIds.add(el.id);
+                
+                java.append("    private static final String ").append(toConstantName(el.id));
+                java.append(" = \"id:").append(el.id).append("\";\n");
+                
+                if (el.isClickable) clickables.add(el.id);
+                if (el.isTextField) textFields.add(el.id);
+            }
+            
+            java.append("\n");
+            
+            for (String id : clickables) {
+                java.append("    public void tap").append(toCamelCase(id)).append("() {\n");
+                java.append("        app.tap(").append(toConstantName(id)).append(");\n");
+                java.append("    }\n\n");
+            }
+            
+            for (String id : textFields) {
+                java.append("    public void enterIn").append(toCamelCase(id)).append("(String text) {\n");
+                java.append("        app.type(").append(toConstantName(id)).append(", text);\n");
+                java.append("    }\n\n");
+            }
+            
+            if (screen.pathFromRoot != null && !screen.pathFromRoot.isEmpty()) {
+                java.append("    public void navigateHere() {\n");
+                for (Explorer.NavigationStep step : screen.pathFromRoot) {
+                    java.append("        app.tap(\"id:").append(step.elementTapped).append("\");\n");
+                    java.append("        app.pause(1);\n");
+                }
+                java.append("    }\n\n");
+            }
+            
+            java.append("    public boolean isDisplayed() {\n");
+            if (!addedIds.isEmpty()) {
+                String firstId = addedIds.iterator().next();
+                java.append("        return app.exists(").append(toConstantName(firstId)).append(");\n");
+            } else {
+                java.append("        return true;\n");
+            }
+            java.append("    }\n");
+            java.append("}\n");
+            
+            writeScreenClass(screenName + ".java", java.toString());
+            screenCount++;
+        }
+    }
+
+    private String deriveScreenName(String screenId, int index) {
+        String name;
+        if (screenId.contains(".")) {
+            String[] parts = screenId.split("\\.");
+            String last = parts[parts.length - 1];
+            last = last.replace("Activity", "").replace("Fragment", "");
+            name = last;
+        } else {
+            name = screenId;
+        }
+        
+        name = name.replaceAll("[^a-zA-Z0-9]", "");
+        if (name.isEmpty() || Character.isDigit(name.charAt(0))) {
+            name = "Screen" + (index + 1);
+        }
+        if (!name.endsWith("Screen")) {
+            name += "Screen";
+        }
+        return name;
+    }
+
+    private String toConstantName(String id) {
+        return id.toUpperCase();
+    }
+
+    private String toCamelCase(String id) {
+        if (id == null || id.isEmpty()) return "Unknown";
+        String cleaned = id.replaceAll("(IV|Bt|Btn|Button|RL|TV|ET)$", "");
+        return Character.toUpperCase(cleaned.charAt(0)) + cleaned.substring(1);
+    }
+
+    private void writeScreenClass(String filename, String content) {
+        try {
+            Path path = Paths.get("src/test/java/com/test/screens/generated/" + filename);
+            Files.writeString(path, content);
+            System.out.println("Generated: " + path);
+        } catch (IOException e) {
+            System.err.println("Failed to write " + filename + ": " + e.getMessage());
         }
     }
 
@@ -339,7 +445,7 @@ public class TestGenerator {
         try {
             Path path = Paths.get(outputDir + filename);
             Files.writeString(path, content);
-            System.out.println("📝 Generated: " + path);
+            System.out.println("Generated: " + path);
         } catch (IOException e) {
             System.err.println("Failed to write " + filename + ": " + e.getMessage());
         }
