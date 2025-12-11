@@ -2,6 +2,10 @@
 
 Automated testing framework for Android apps using Appium, Cucumber, and Maven.
 
+## Video
+
+https://drive.google.com/file/d/1fnWxQpbMgEFMEsHEz7garLrbG1yu0Dxe/view?usp=sharing
+
 ## Prerequisites
 
 - Java 17 or higher
