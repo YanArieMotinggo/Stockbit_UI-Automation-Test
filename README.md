@@ -7,54 +7,48 @@ Automated testing framework for Android apps using Appium, Cucumber, and Maven.
 - Java 17 or higher
 - Maven 3.6+
 - Node.js 16+ and npm
-- Android SDK with platform-tools
+- Android SDK with platform-tools (via Android Studio)
 - Android emulator or physical device
 
-## Setup
+## Quick Start
 
-### 1. Install Android SDK
+### Step 1: Set Up Environment Variables (One-Time Setup)
 
-Ensure Android SDK is installed and the environment variable is set:
+Add these lines to your shell profile (`~/.zshrc` on macOS or `~/.bashrc` on Linux):
 
 ```bash
-export ANDROID_HOME=/path/to/Android/sdk
+# Android SDK - typical macOS path
+export ANDROID_HOME=~/Library/Android/sdk
 export PATH=$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH
 ```
 
-Add these lines to the shell profile (~/.zshrc or ~/.bashrc) to make them permanent.
+Then reload your shell:
 
-### 2. Install Appium
+```bash
+source ~/.zshrc
+```
 
-Install Appium and the UiAutomator2 driver locally in the project:
+Verify the setup:
+
+```bash
+echo $ANDROID_HOME
+# Should print: /Users/your-username/Library/Android/sdk
+
+adb --version
+# Should print adb version info
+```
+
+### Step 2: Install Dependencies
 
 ```bash
 npm install
 ```
 
-Or install manually:
+This installs Appium and the UiAutomator2 driver.
 
-```bash
-npm install appium@2.5.0
-npx appium driver install uiautomator2@2.45.1
-```
+### Step 3: Configure Device
 
-### 3. Add the APK
-
-Place the Android APK file in the app folder:
-
-```
-src/test/resources/app/app.apk
-```
-
-Then update the `test.properties` file to point to the APK:
-
-```properties
-app=src/test/resources/app/app.apk
-```
-
-### 4. Configure Device
-
-Edit `src/test/resources/test.properties` to match the emulator or device:
+Edit `src/test/resources/test.properties`:
 
 ```properties
 # Appium server
@@ -65,7 +59,7 @@ device=emulator-5554
 version=12
 
 # App
-app=src/test/resources/app/app.apk
+app=src/test/resources/app/mda-1.0.13-15.apk
 
 # Timeouts
 wait=15
@@ -73,47 +67,58 @@ wait=15
 
 ## Running Tests
 
-### Step 1: Start the Android Emulator
+You need **3 terminal windows** open:
 
-Start the emulator from Android Studio or via command line:
+### Terminal 1: Start the Android Emulator
+
+First, list available emulators:
 
 ```bash
-emulator -avd AVD_Name
+$ANDROID_HOME/emulator/emulator -list-avds
 ```
 
-Verify the device is connected:
+Start your emulator (replace with your AVD name):
+
+```bash
+$ANDROID_HOME/emulator/emulator -avd Pixel_6_Pro_Edited_API_34
+```
+
+In a separate terminal, verify the device is connected:
 
 ```bash
 adb devices
+# Should show: emulator-5554    device
 ```
 
-### Step 2: Start Appium Server
-
-Open a terminal and start the Appium server:
+### Terminal 2: Start Appium Server
 
 ```bash
-export ANDROID_HOME=/path/to/Android/sdk
-export PATH=$ANDROID_HOME/platform-tools:$PATH
 npx appium --relaxed-security
 ```
 
-Keep this terminal running while executing tests.
+You should see:
 
-### Step 3: Run Tests
+```
+[Appium] Welcome to Appium v2.5.0
+[Appium] Appium REST http interface listener started on http://0.0.0.0:4723
+```
 
-Open another terminal and run:
+**Keep this terminal running** while executing tests.
+
+### Terminal 3: Run Tests
 
 ```bash
-# Run all tests
-mvn test
-
-# Run specific feature by tag
+# Run the test generator (explores the app and creates test files)
 mvn test -Dcucumber.filter.tags="@generate"
-mvn test -Dcucumber.filter.tags="@explore"
-mvn test -Dcucumber.filter.tags="@shopping"
 
 # Run generated tests
 mvn test -Dcucumber.filter.tags="@generated"
+
+# Run shopping flow tests
+mvn test -Dcucumber.filter.tags="@shopping"
+
+# Run all tests
+mvn test
 ```
 
 ## Project Structure
@@ -133,7 +138,7 @@ src/test/
       TestHooks.java      - Before/After hooks
   resources/
     app/
-      app.apk            - The Android app
+      *.apk              - The Android app
     features/
       Explore.feature    - Manual exploration scenarios
       Shopping.feature   - Manual test scenarios
@@ -170,9 +175,9 @@ After exploration, the framework creates two types of files:
 
 **Feature files** in `src/test/resources/features/generated/`:
 
-- `Navigation.feature` - Test scenarios that verify navigation to each discovered screen. Each test includes the exact sequence of taps needed to reach that screen.
-- `Elements.feature` - Test scenarios that tap each discovered button and verify the app does not crash.
-- `SmokeGenerated.feature` - A few key test scenarios covering common paths like opening menus and adding items to cart.
+- `Navigation.feature` - Test scenarios that verify navigation to each discovered screen
+- `Elements.feature` - Test scenarios that tap each discovered button and verify the app does not crash
+- `SmokeGenerated.feature` - Key test scenarios covering common paths
 
 **Screen classes** in `src/test/java/com/test/screens/generated/`:
 
@@ -181,40 +186,6 @@ For each screen discovered, a Java class is created with:
 - A tap method for each clickable element
 - An enter method for each text input field
 - A navigateHere method that contains the tap sequence to reach this screen from the app start
-
-Example of a generated screen class:
-
-```java
-public class ProductsScreen {
-    private static final String MENUIV = "id:menuIV";
-    private static final String CARTRL = "id:cartRL";
-    private static final String PRODUCTIV = "id:productIV";
-
-    public void tapMenu() {
-        app.tap(MENUIV);
-    }
-
-    public void tapCart() {
-        app.tap(CARTRL);
-    }
-
-    public void navigateHere() {
-        // empty if this is the starting screen
-    }
-}
-```
-
-### Using the Generated Tests
-
-Once generation is complete, run the generated tests:
-
-```bash
-mvn test -Dcucumber.filter.tags="@generated"
-```
-
-This runs all the tests that were created from exploration. If any test fails, it means something changed in the app or there is a bug.
-
-The generated screen classes can also be used in custom tests to make them easier to write and maintain.
 
 ### Manual Tests
 
@@ -241,21 +212,50 @@ Available step definitions:
 
 ## Troubleshooting
 
-### Appium server not starting
+### "Cannot start session" Error
 
-Ensure ANDROID_HOME is set correctly:
+This usually means `ANDROID_HOME` is not set. Verify:
 
 ```bash
 echo $ANDROID_HOME
+# Should print your Android SDK path
+```
+
+If empty, add to your `~/.zshrc`:
+
+```bash
+export ANDROID_HOME=~/Library/Android/sdk
+export PATH=$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH
+```
+
+Then restart your terminal or run `source ~/.zshrc`.
+
+### "command not found: emulator" or "command not found: adb"
+
+Use the full path:
+
+```bash
+# List emulators
+~/Library/Android/sdk/emulator/emulator -list-avds
+
+# Start emulator
+~/Library/Android/sdk/emulator/emulator -avd YOUR_AVD_NAME
+
+# Check devices
+~/Library/Android/sdk/platform-tools/adb devices
 ```
 
 ### Device not found
 
-Check if the device/emulator is running:
+1. Check if the emulator is running and fully booted
+2. Run `adb devices` to verify connection
+3. If using a physical device, enable USB debugging
 
-```bash
-adb devices
-```
+### Appium server not responding
+
+1. Check if Appium is running on port 4723
+2. Verify with: `curl http://127.0.0.1:4723/status`
+3. Should return: `{"value":{"ready":true,...}}`
 
 ### App not installing
 
@@ -273,8 +273,6 @@ Increase timeouts in `test.properties`:
 ```properties
 wait=30
 ```
-
-Or in `Session.java`, adjust the timeout durations.
 
 ## Test Reports
 
