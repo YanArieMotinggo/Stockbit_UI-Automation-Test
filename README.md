@@ -12,7 +12,7 @@ Automated testing framework for Android apps using Appium, Cucumber, and Maven.
 
 ## Quick Start
 
-### Step 1: Set Up Environment Variables (One-Time Setup)
+### Step 1: Set Up Environment Variables (Recommended - One-Time Setup)
 
 Add these lines to your shell profile (`~/.zshrc` on macOS or `~/.bashrc` on Linux):
 
@@ -37,6 +37,8 @@ echo $ANDROID_HOME
 adb --version
 # Should print adb version info
 ```
+
+> **Note:** If you skip this step, you must include `export ANDROID_HOME=...` in every terminal command (see "Running Tests Without Global Setup" below).
 
 ### Step 2: Install Dependencies
 
@@ -65,25 +67,25 @@ app=src/test/resources/app/mda-1.0.13-15.apk
 wait=15
 ```
 
-## Running Tests
+---
+
+## Running Tests (With Global ANDROID_HOME Setup)
+
+If you completed Step 1 above, use these simple commands.
 
 You need **3 terminal windows** open:
 
 ### Terminal 1: Start the Android Emulator
 
-First, list available emulators:
-
 ```bash
-$ANDROID_HOME/emulator/emulator -list-avds
+# List available emulators
+emulator -list-avds
+
+# Start your emulator (replace with your AVD name)
+emulator -avd Pixel_6_Pro_Edited_API_34
 ```
 
-Start your emulator (replace with your AVD name):
-
-```bash
-$ANDROID_HOME/emulator/emulator -avd Pixel_6_Pro_Edited_API_34
-```
-
-In a separate terminal, verify the device is connected:
+Verify the device is connected:
 
 ```bash
 adb devices
@@ -96,10 +98,9 @@ adb devices
 npx appium --relaxed-security
 ```
 
-You should see:
+Wait until you see:
 
 ```
-[Appium] Welcome to Appium v2.5.0
 [Appium] Appium REST http interface listener started on http://0.0.0.0:4723
 ```
 
@@ -120,6 +121,57 @@ mvn test -Dcucumber.filter.tags="@shopping"
 # Run all tests
 mvn test
 ```
+
+---
+
+## Running Tests Without Global Setup (Copy-Paste Commands)
+
+If you **did not** add `ANDROID_HOME` to your `~/.zshrc`, use these commands instead. Each command includes the required environment variables.
+
+### Terminal 1: Start the Android Emulator
+
+```bash
+# List available emulators
+~/Library/Android/sdk/emulator/emulator -list-avds
+
+# Start your emulator (replace YOUR_AVD_NAME with your emulator name)
+~/Library/Android/sdk/emulator/emulator -avd YOUR_AVD_NAME
+```
+
+### Terminal 2: Start Appium Server
+
+ **Important:** The Appium server MUST have `ANDROID_HOME` set, or tests will fail with "Neither ANDROID_HOME nor ANDROID_SDK_ROOT environment variable was exported".
+
+```bash
+export ANDROID_HOME=~/Library/Android/sdk && export PATH=$ANDROID_HOME/platform-tools:$PATH && npx appium --relaxed-security
+```
+
+Wait until you see:
+
+```
+[Appium] Appium REST http interface listener started on http://0.0.0.0:4723
+```
+
+### Terminal 3: Run Tests
+
+```bash
+export ANDROID_HOME=~/Library/Android/sdk && export PATH=$ANDROID_HOME/platform-tools:$PATH && mvn test -Dcucumber.filter.tags="@generate"
+```
+
+Other test commands:
+
+```bash
+# Run generated tests
+export ANDROID_HOME=~/Library/Android/sdk && export PATH=$ANDROID_HOME/platform-tools:$PATH && mvn test -Dcucumber.filter.tags="@generated"
+
+# Run shopping tests
+export ANDROID_HOME=~/Library/Android/sdk && export PATH=$ANDROID_HOME/platform-tools:$PATH && mvn test -Dcucumber.filter.tags="@shopping"
+
+# Run all tests
+export ANDROID_HOME=~/Library/Android/sdk && export PATH=$ANDROID_HOME/platform-tools:$PATH && mvn test
+```
+
+---
 
 ## Project Structure
 
@@ -212,27 +264,30 @@ Available step definitions:
 
 ## Troubleshooting
 
-### "Cannot start session" Error
+### "Neither ANDROID_HOME nor ANDROID_SDK_ROOT environment variable was exported"
 
-This usually means `ANDROID_HOME` is not set. Verify:
+This is the most common error. It means the **Appium server** was started without `ANDROID_HOME` set.
 
-```bash
-echo $ANDROID_HOME
-# Should print your Android SDK path
-```
-
-If empty, add to your `~/.zshrc`:
+**Fix:**
+1. Stop the Appium server (Ctrl+C)
+2. Restart it with ANDROID_HOME:
 
 ```bash
-export ANDROID_HOME=~/Library/Android/sdk
-export PATH=$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH
+export ANDROID_HOME=~/Library/Android/sdk && export PATH=$ANDROID_HOME/platform-tools:$PATH && npx appium --relaxed-security
 ```
 
-Then restart your terminal or run `source ~/.zshrc`.
+### "Cannot start session" or "Connection refused"
+
+This means the Appium server is not running or not reachable.
+
+**Fix:**
+1. Check if Appium is running: `curl http://127.0.0.1:4723/status`
+2. If not, start Appium (see Terminal 2 commands above)
+3. Make sure Appium shows "listener started on http://0.0.0.0:4723" before running tests
 
 ### "command not found: emulator" or "command not found: adb"
 
-Use the full path:
+Your `ANDROID_HOME` is not in PATH. Use full paths:
 
 ```bash
 # List emulators
@@ -245,17 +300,13 @@ Use the full path:
 ~/Library/Android/sdk/platform-tools/adb devices
 ```
 
+Or add to your `~/.zshrc` (recommended).
+
 ### Device not found
 
 1. Check if the emulator is running and fully booted
 2. Run `adb devices` to verify connection
 3. If using a physical device, enable USB debugging
-
-### Appium server not responding
-
-1. Check if Appium is running on port 4723
-2. Verify with: `curl http://127.0.0.1:4723/status`
-3. Should return: `{"value":{"ready":true,...}}`
 
 ### App not installing
 
